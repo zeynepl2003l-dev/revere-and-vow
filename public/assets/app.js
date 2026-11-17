@@ -32,30 +32,113 @@ const publicTranslations={
 };
 function translatePublic(){document.documentElement.lang=lang;document.querySelectorAll('[data-t]').forEach(e=>{e.textContent=publicTranslations[lang][e.dataset.t]||e.textContent});$('#lang-toggle').textContent=lang==='tr'?'EN':'TR';$('#login-top').textContent=T('Üye Girişi','Member Login')}
 
+async function invokeUsernameAuth(payload) {
+ const {data,error}=await db.functions.invoke('username-auth',{body:payload});
+ if(error){
+  let message=T('Kayıt servisine bağlanılamadı.','Could not reach account service.');
+  try {const detail=await error.context?.json?.();message=detail?.error||message}
+  catch {message=error.message||message}
+  throw new Error(message);
+ }
+ if(data?.error)throw new Error(data.error);
+ return data;
+}
+function showRecoveryCode(code) {
+ if(!code)return;
+ const dlg=$('#auth-dialog'),content=$('#auth-content');content.replaceChildren(
+  h2(T('Hesap kurtarma kodun','Your account recovery code')),
+  p(T('Bu kodu güvenli bir yere kaydet. E-posta istemediğimiz için şifreni unutursan hesabını yalnızca bu kodla kurtarabilirsin. Kodu başka kimseyle paylaşma.','Save this code securely. Since we do not ask for email, this code is needed to recover your account if you forget your password. Never share it.')),
+  child('pre',{class:'recovery-code',text:code}),
+  btn(T('Kodu kopyala','Copy code'),async()=>{try{await navigator.clipboard.writeText(code);toast(T('Kod kopyalandı','Code copied'))}catch{toast(T('Kodu elle kopyalayıp kaydet.','Please copy the code manually.'))}},'gold'),
+  btn(T('Kodu kaydettim','I have saved the code'),()=>dlg.close(),'subtlebtn')
+ );
+ if(!dlg.open)dlg.showModal();
+}
 function authDialog(mode='signin'){
  const dlg=$('#auth-dialog'),content=$('#auth-content');content.replaceChildren();
- if(!db){content.append(h2(T('Bağlantı kurulumu gerekli','Connection needed')),p(T('Bu kaynak kod henüz bir Supabase projesine bağlanmadı. Kurulum yönergeleri paket içindeki README.md dosyasında.','This site has not been linked to a Supabase project yet. See README.md in the project package.')));dlg.showModal();return}
- const title={signin:T('Üye girişi','Sign in'),signup:T('Yeni hesap','Create account'),forgot:T('Şifre sıfırlama','Password reset'),change:T('Yeni şifre belirle','Set new password')};
- content.append(h2(title[mode]||title.signin),p(T('Üyelik ücretsizdir. Hesap açınca yönetici onayı gerekmeden giriş yapabilirsin.','Registration is open. No manager approval is needed to join.')));
- const f=child('form');let email,pass,display,game;
- if(mode!=='change') {email=input('E-posta','email');email.required=true;email.autocomplete='email';f.append(labelField(T('E-posta','Email'),email))}
- if(mode==='signup') {display=input(T('Sitede görünen ad','Display name'));game=input(T('Oyun içi ad','Game name'));display.required=true;game.required=true;display.maxLength=48;game.maxLength=80;f.append(labelField(T('Görünen ad','Display name'),display),labelField(T('Oyun adı','Game name'),game))}
- if(mode!=='forgot'){pass=input(T('Şifre (en az 8 karakter)','Password (8 characters minimum)'),'password');pass.required=true;pass.minLength=8;pass.autocomplete=mode==='signin'?'current-password':'new-password';f.append(labelField(T('Şifre','Password'),pass))}
- f.append(btn(mode==='signup'?T('Kayıt ol','Sign up'):mode==='forgot'?T('Sıfırlama e-postası gönder','Send reset email'):mode==='change'?T('Şifreyi değiştir','Change password'):T('Giriş yap','Sign in'),()=>{},'gold'));
+ if(!db){content.append(h2(T('Bağlantı kurulumu gerekli','Connection needed')),p(T('Site veritabanına bağlanılamadı.','Could not connect to the site database.')));if(!dlg.open)dlg.showModal();return}
+ const title={
+  signin:T('Üye girişi','Sign in'),signup:T('E-postasız hesap oluştur','Create account without email'),
+  recover:T('Kurtarma koduyla şifre yenile','Reset password with recovery code'),
+  'forgot-email':T('Eski e-postalı hesap kurtarma','Existing email account recovery'),
+  change:T('Yeni şifre belirle','Set new password'),
+ };
+ content.append(h2(title[mode]||title.signin),p(T(
+  'Kayıt olmak için gerçek e-posta veya oyun hesabının şifresi istenmez.',
+  'No real email or game account password is required to register.'
+ )));
+ const f=child('form');let login,pass,display,game,recovery;
+ if(mode!=='change'){
+  login=input(mode==='signup'?T('Kullanıcı adı (3–24 karakter)','Username (3–24 characters)'):
+    mode==='forgot-email'?T('Eski hesap e-postası','Existing account email'):
+    T('Kullanıcı adı','Username'),mode==='forgot-email'?'email':'text');
+  login.required=true;login.maxLength=mode==='forgot-email'?254:80;
+  login.autocomplete=mode==='signup'?'username':mode==='signin'?'username':'off';
+  f.append(labelField(mode==='forgot-email'?T('E-posta','Email'):
+    mode==='signin'?T('Kullanıcı adı (eski hesaplar için e-posta)','Username (or email for old accounts)'):T('Kullanıcı adı','Username'),login));
+ }
+ if(mode==='signup'){
+  display=input(T('Sitede görünen ad','Display name'));
+  game=input(T('Oyun içi ad','Game name'));
+  display.required=true;game.required=true;display.maxLength=48;game.maxLength=80;
+  f.append(labelField(T('Görünen ad','Display name'),display),labelField(T('Oyun adı','Game name'),game));
+ }
+ if(mode==='recover'){
+  recovery=input(T('Kurtarma kodu','Recovery code'));recovery.required=true;recovery.autocomplete='off';
+  f.append(labelField(T('Kurtarma kodu','Recovery code'),recovery));
+ }
+ if(mode!=='forgot-email'){
+  pass=input(T(mode==='signin'?'Şifre':'Şifre (en az 12 karakter)',mode==='signin'?'Password':'Password (at least 12 characters)'),'password');
+  pass.required=true;pass.minLength=mode==='signin'?1:12;pass.maxLength=128;
+  pass.autocomplete=mode==='signin'?'current-password':'new-password';
+  f.append(labelField(T('Şifre','Password'),pass));
+ }
+ f.append(btn(mode==='signup'?T('E-postasız kayıt ol','Sign up without email'):
+   mode==='recover'?T('Kurtarma koduyla yenile','Recover account'):
+   mode==='forgot-email'?T('Sıfırlama e-postası gönder','Send reset email'):
+   mode==='change'?T('Şifreyi değiştir','Change password'):T('Giriş yap','Sign in'),()=>{},'gold'));
  const submit=f.lastElementChild;submit.type='submit';submit.onclick=null;
  f.addEventListener('submit',async e=>{
   e.preventDefault();submit.disabled=true;
   try {
-   if(mode==='signin') assert(null,(await db.auth.signInWithPassword({email:email.value.trim(),password:pass.value})).error);
-   if(mode==='signup') assert(null,(await db.auth.signUp({email:email.value.trim(),password:pass.value,options:{data:{display_name:display.value.trim(),game_name:game.value.trim()}}})).error);
-   if(mode==='forgot') assert(null,(await db.auth.resetPasswordForEmail(email.value.trim(),{redirectTo:location.origin+location.pathname})).error);
-   if(mode==='change') assert(null,(await db.auth.updateUser({password:pass.value})).error);
-   dlg.close();toast(mode==='signup'?T('Hesabın oluşturuldu! İstenirse e-postanı doğrula, ardından giriş yap.','Account created! If requested, verify your email, then sign in.'):mode==='forgot'?T('Sıfırlama e-postası gönderildi (hesap mevcutsa).','Reset email requested.'):mode==='change'?T('Şifre güncellendi.','Password updated.'):T('Giriş başarılı.','Signed in.'));
+   if(mode==='signin'){
+    const identifier=login.value.trim();
+    if(identifier.includes('@')){
+     assert(null,(await db.auth.signInWithPassword({email:identifier,password:pass.value})).error);
+    }else{
+     const result=await invokeUsernameAuth({action:'login',username:identifier,password:pass.value});
+     assert(null,(await db.auth.setSession({access_token:result.access_token,refresh_token:result.refresh_token})).error);
+    }
+   }
+   if(mode==='signup'){
+    const result=await invokeUsernameAuth({action:'register',username:login.value.trim(),password:pass.value,
+      display_name:display.value.trim(),game_name:game.value.trim()});
+    dlg.close();
+    if(result.access_token&&result.refresh_token)assert(null,(await db.auth.setSession({access_token:result.access_token,refresh_token:result.refresh_token})).error);
+    showRecoveryCode(result.recovery_code);
+    return;
+   }
+   if(mode==='recover'){
+    const result=await invokeUsernameAuth({action:'recover',username:login.value.trim(),
+      recovery_code:recovery.value.trim(),new_password:pass.value});
+    dlg.close();showRecoveryCode(result.recovery_code);
+    toast(T('Şifre değiştirildi, yeni kurtarma kodunu kaydet.','Password reset. Save your new recovery code.'));return;
+   }
+   if(mode==='forgot-email')assert(null,(await db.auth.resetPasswordForEmail(login.value.trim(),{redirectTo:location.origin+location.pathname})).error);
+   if(mode==='change')assert(null,(await db.auth.updateUser({password:pass.value})).error);
+   dlg.close();
+   toast(mode==='forgot-email'?T('E-posta mevcutsa sıfırlama bağlantısı gönderildi.','Reset link requested if the email exists.'):
+     mode==='change'?T('Şifre güncellendi.','Password updated.'):T('Giriş başarılı.','Signed in.'));
   }catch(x){err(x)}finally{submit.disabled=false}
  });
  content.append(f);
- if(mode==='signin')content.append(child('div',{class:'auth-extras'},btn(T('Hesap oluştur','Register'),()=>authDialog('signup'),'subtlebtn'),btn(T('Şifremi unuttum','Forgot password'),()=>authDialog('forgot'),'subtlebtn')));
- if(mode==='signup'||mode==='forgot')content.append(btn(T('Girişe dön','Back to sign in'),()=>authDialog('signin'),'subtlebtn'));
+ const actions=child('div',{class:'auth-extras'});
+ if(mode==='signin')actions.append(
+  btn(T('E-postasız hesap oluştur','Create account without email'),()=>authDialog('signup'),'subtlebtn'),
+  btn(T('Şifremi unuttum','Forgot password'),()=>authDialog('recover'),'subtlebtn'));
+ if(mode==='recover')actions.append(btn(T('Eski e-postalı hesabım var','I have an older email account'),()=>authDialog('forgot-email'),'subtlebtn'));
+ if(mode!=='signin')actions.append(btn(T('Girişe dön','Back to sign in'),()=>authDialog('signin'),'subtlebtn'));
+ content.append(actions);
  if(!dlg.open)dlg.showModal();
 }
 async function syncAuth(){
@@ -126,7 +209,7 @@ async function showThread(target,threadId,map){clearSubscriptions();loading(targ
  await refresh();sub('dm_messages',`thread_id=eq.${threadId}`,()=>refresh().catch(err));
 }catch(e){content(target,notice(e.message))}}
 
-async function showProfile(target){const display=input('Display name'),game=input('Game name');display.value=profile.display_name;game.value=profile.game_name;display.maxLength=48;game.maxLength=80;const panel=card(heading(T('Profilim','My profile')),p(T('E-posta: ','Email: ')+session.user.email),p(T('Site rütbesi: ','Site rank: ')+role()),p(T('Durum: ','Status: ')+profile.approval_status),labelField(T('Görünen ad','Display name'),display),labelField(T('Oyun içi ad','Game name'),game),btn(T('Profili kaydet','Save profile'),async()=>{await run(async()=>{assert(null,(await db.from('profiles').update({display_name:display.value,game_name:game.value}).eq('id',session.user.id)).error);await syncAuth();toast(T('Profil güncellendi','Profile updated'))})},'gold'),child('div',{class:'spacer'}),btn(T('Şifremi değiştir','Change password'),()=>authDialog('change')));content(target,panel)}
+async function showProfile(target){const display=input('Display name'),game=input('Game name');display.value=profile.display_name;game.value=profile.game_name;display.maxLength=48;game.maxLength=80;const panel=card(heading(T('Profilim','My profile')),p(session.user.email?.endsWith('@accounts.example')?T('Kullanıcı adı: ','Username: ')+(session.user.user_metadata?.login_username||'—'):T('E-posta: ','Email: ')+session.user.email),p(T('Site rütbesi: ','Site rank: ')+role()),p(T('Durum: ','Status: ')+profile.approval_status),labelField(T('Görünen ad','Display name'),display),labelField(T('Oyun içi ad','Game name'),game),btn(T('Profili kaydet','Save profile'),async()=>{await run(async()=>{assert(null,(await db.from('profiles').update({display_name:display.value,game_name:game.value}).eq('id',session.user.id)).error);await syncAuth();toast(T('Profil güncellendi','Profile updated'))})},'gold'),child('div',{class:'spacer'}),btn(T('Şifremi değiştir','Change password'),()=>authDialog('change')));content(target,panel)}
 
 async function showAdmin(target){if(!manager())return content(target,notice('Not authorized'));loading(target);try{const [pending,approved,reports,audit]=await Promise.all([db.from('profiles').select('*').eq('approval_status','pending').order('created_at'),db.from('profiles').select('*').eq('approval_status','approved').order('game_name').limit(150),db.from('dm_reports').select('*').order('created_at',{ascending:false}).limit(20),db.from('audit_log').select('*').order('recorded_at',{ascending:false}).limit(20)]);for(const r of [pending,approved,reports,audit])assert(null,r.error);
  const box=card(heading(T('Üye yönetimi','Member management')));for(const x of pending.data)box.append(listLine([child('strong',{text:x.game_name+' ('+x.display_name+')'}),small(formatDate(x.created_at))],[btn(T('Onayla','Approve'),()=>decide(x.id,'approved')),btn(T('Reddet','Reject'),()=>decide(x.id,'rejected'),'btn-danger')]));if(!pending.data.length)box.append(empty(T('Bekleyen eski kayıt yok. Yeni üyeler otomatik katılır.','No old pending accounts. New members join automatically.')));
