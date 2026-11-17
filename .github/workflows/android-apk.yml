@@ -7,7 +7,7 @@ on:
       - 'android/**'
       - '.github/workflows/android-apk.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
   build-debug:
     runs-on: ubuntu-latest
@@ -39,3 +39,22 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish Android beta APK to GitHub Releases
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp android/app/build/outputs/apk/debug/app-debug.apk RAV-Alliance-Android-Beta.apk
+          if gh release view android-beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload android-beta RAV-Alliance-Android-Beta.apk --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create android-beta RAV-Alliance-Android-Beta.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "RAV Alliance Android Beta (test)" \
+              --notes "RAV Alliance Android test APK. Debug build for limited testing only; not a production release." \
+              --prerelease
+          fi
