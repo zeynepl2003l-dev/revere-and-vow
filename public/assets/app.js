@@ -195,8 +195,77 @@ async function showTopic(target,id){loading(target);try{const [t,rep,mp]=await P
  async function setFlags(pinned,locked){await run(async()=>{assert(null,(await db.rpc('set_topic_flags',{topic:id,p_pinned:pinned,p_locked:locked})).error);showTopic(target,id)})}
  panel.append(child('div',{class:'spacer'}),h3(T('Yanıtlar','Replies')));for(const r of rep.data)panel.append(listLine([small(nick(r.author_id,mp)+' • '+formatDate(r.created_at)),p(r.body,'post-body')],manager()||r.author_id===session.user.id?[btn(T('Sil','Delete'),async()=>{if(!confirm(T('Yanıt silinsin mi?','Delete reply?')))return;await run(async()=>{assert(null,(await db.from('forum_replies').delete().eq('id',r.id)).error);showTopic(target,id)})},'btn-danger')]:[]));if(!x.locked){const reply=textarea(T('Yanıt yaz…','Write a reply…'));panel.append(labelField(T('Yanıtın','Your reply'),reply),btn(T('Gönder','Post'),async()=>{await run(async()=>{assert(null,(await db.from('forum_replies').insert({topic_id:id,body:reply.value,author_id:session.user.id})).error);showTopic(target,id)})},'gold'))}else panel.append(notice(T('Bu konu kilitli.','This topic is locked.')));content(target,panel)}catch(e){content(target,notice(e.message))}}
 
-async function showChat(target,room='general'){clearSubscriptions();loading(target);try{if(room==='leadership'&&!manager())throw new Error('Not authorized');const [r,mp]=await Promise.all([db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60),getDisplayMap()]);assert(null,r.error);const panel=card(heading(T('Canlı ittifak sohbeti','Alliance live chat')));const tabbar=child('div',{class:'tabs'},btn('# '+T('Genel','General'),()=>showChat(target,'general'),'mini-btn '+(room==='general'?'active':'')),...(manager()?[btn('# '+T('Yönetim','Leadership'),()=>showChat(target,'leadership'),'mini-btn '+(room==='leadership'?'active':''))]:[]));const feed=child('div',{class:'message-feed',role:'log','aria-label':T('Sohbet mesajları','Chat messages')});const draft=input(T('Mesaj yaz…','Write message…'));draft.maxLength=1200;const send=btn(T('Gönder','Send'),async()=>{const msg=draft.value.trim();if(!msg)return;send.disabled=true;try{assert(null,(await db.from('room_messages').insert({room_id:room,author_id:session.user.id,body:msg})).error);draft.value='';await refresh()}catch(e){err(e)}finally{send.disabled=false}},'gold');draft.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send.click()}});panel.append(tabbar,feed,child('div',{class:'message-send'},draft,send),p(T('Mesajlar onaylı üyeler arasında görünür. Site yöneticileri genel kanalda moderasyon yapabilir.','Messages are visible to approved members. Moderators can remove room messages.'),'note-sm'));content(target,panel);
- async function refresh(){const next=await db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60);assert(null,next.error);feed.replaceChildren();for(const x of next.data.reverse()){const item=child('div',{class:'bubble '+(x.author_id===session.user.id?'mine':'')},small(nick(x.author_id,mp)+' · '+formatDate(x.created_at)),p(x.body));if(manager())item.append(btn('× '+T('Sil','Delete'),async()=>{if(!confirm(T('Mesaj silinsin mi?','Delete message?')))return;await run(async()=>{assert(null,(await db.from('room_messages').delete().eq('id',x.id)).error);refresh()})},'subtlebtn'));feed.append(item)}feed.scrollTop=feed.scrollHeight}
+
+/* On-demand community translation; only the general chat has this button. */
+const translationLanguages=[['tr','Türkçe'],['en','English'],['de','Deutsch'],['fr','Français'],['es','Español'],['ar','العربية'],['ru','Русский'],['it','Italiano'],['pt','Português'],['pl','Polski'],['nl','Nederlands'],['uk','Українська']];
+const translationLanguageCodes=new Set(translationLanguages.map(x=>x[0]));
+const translationCache=new Map();
+function preferredTranslationLanguage(){
+ const code=session?.user?.user_metadata?.preferred_language;
+ return translationLanguageCodes.has(code)?code:'tr';
+}
+function guessChatLanguage(text,target){
+ if(/[а-яА-ЯёЁіїєґІЇЄҐ]/u.test(text))return 'ru';
+ if(/[\u0600-\u06ff]/u.test(text))return 'ar';
+ if(/[çğıöşüÇĞİÖŞÜ]/u.test(text)||/\b(merhaba|selam|nasılsın|arkadaşlar|saldırı|ittifak|gönder|teşekkür|yarın|bugün)\b/i.test(text))return 'tr';
+ return target==='en'?'tr':'en';
+}
+function splitRavTranslation(text){
+ const words=text.trim().split(/\s+/u),parts=[];let current='';
+ const enc=new TextEncoder();
+ for(const word of words){
+  if(enc.encode(word).length>490)throw new Error(T('Çok uzun bir kelime çevrilemiyor.','A word is too long to translate.'));
+  const candidate=current?current+' '+word:word;
+  if(enc.encode(candidate).length>490){if(current)parts.push(current);current=word}else current=candidate;
+ }
+ if(current)parts.push(current);
+ if(parts.length>5)throw new Error(T('Mesaj çevrilemeyecek kadar uzun.','Message is too long to translate.'));
+ return parts;
+}
+async function translateRavText(text,source,target){
+ if(source===target)return text;
+ if(!translationLanguageCodes.has(source)||!translationLanguageCodes.has(target))throw new Error('Unsupported language');
+ const chunks=splitRavTranslation(text),out=[];
+ for(const chunk of chunks){
+  const url=new URL('https://api.mymemory.translated.net/get');
+  url.searchParams.set('q',chunk);
+  url.searchParams.set('langpair',source+'|'+target);
+  const res=await fetch(url.href,{cache:'no-store'});
+  const data=await res.json();
+  if(!res.ok||Number(data?.responseStatus)!==200||typeof data?.responseData?.translatedText!=='string')throw new Error(T('Çeviri servisi şu anda yanıt vermiyor veya günlük sınırına ulaştı.','Translation provider unavailable or daily quota exceeded.'));
+  out.push(data.responseData.translatedText);
+ }
+ return out.join(' ');
+}
+function makeChatTranslate(msg){
+ const target=preferredTranslationLanguage();let source=guessChatLanguage(msg.body,target),shown=false;
+ const result=child('div',{class:'chat-translation'});
+ const toggle=btn('🌐 '+T('Çevir','Translate'),async()=>{
+  if(shown){shown=false;result.replaceChildren();toggle.textContent='🌐 '+T('Çevir','Translate');return}
+  const key=String(msg.id)+':'+source+':'+target;
+  toggle.disabled=true;toggle.textContent=T('Çevriliyor…','Translating…');
+  try{
+   if(!translationCache.has(key)){
+    const translated=await translateRavText(msg.body,source,target);
+    if(translationCache.size>160)translationCache.clear();
+    translationCache.set(key,translated);
+   }
+   const sourceSelector=select(translationLanguages);
+   sourceSelector.value=source;
+   const translatedParagraph=p(translationCache.get(key),'chat-translated-text');
+   const meta=p(T('Hedef dil: ','Target language: ')+(translationLanguages.find(x=>x[0]===target)?.[1]||target),'note-sm');
+   const privacy=p(T('Genel sohbet metni Çevir düğmesine basılınca MyMemory adlı harici çeviri servisine gönderilir.','General chat text is sent to an external MyMemory translation provider only on request.'),'note-sm');
+   result.replaceChildren(translatedParagraph,labelField(T('Kaynak dil (gerekirse değiştir)','Source language (change if needed)'),sourceSelector),meta,privacy);
+   sourceSelector.addEventListener('change',()=>{source=sourceSelector.value;shown=false;result.replaceChildren();toggle.textContent='🌐 '+T('Çevir','Translate');toggle.click()});
+   shown=true;toggle.textContent=T('Çeviriyi gizle','Hide translation');
+  }catch(e){shown=false;result.replaceChildren(p(e?.message||String(e),'note-sm'));toggle.textContent='🌐 '+T('Tekrar dene','Try again')}
+  finally{toggle.disabled=false}
+ },'subtlebtn');
+ return child('div',{class:'chat-translate-wrap'},toggle,result);
+}
+
+async function showChat(target,room='general'){clearSubscriptions();loading(target);try{if(room==='leadership'&&!manager())throw new Error('Not authorized');const [r,mp]=await Promise.all([db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60),getDisplayMap()]);assert(null,r.error);const panel=card(heading(T('Canlı ittifak sohbeti','Alliance live chat')));const tabbar=child('div',{class:'tabs'},btn('# '+T('Genel','General'),()=>showChat(target,'general'),'mini-btn '+(room==='general'?'active':'')),...(manager()?[btn('# '+T('Yönetim','Leadership'),()=>showChat(target,'leadership'),'mini-btn '+(room==='leadership'?'active':''))]:[]));const feed=child('div',{class:'message-feed',role:'log','aria-label':T('Sohbet mesajları','Chat messages')});const draft=input(T('Mesaj yaz…','Write message…'));draft.maxLength=1200;const send=btn(T('Gönder','Send'),async()=>{const msg=draft.value.trim();if(!msg)return;send.disabled=true;try{assert(null,(await db.from('room_messages').insert({room_id:room,author_id:session.user.id,body:msg})).error);draft.value='';await refresh()}catch(e){err(e)}finally{send.disabled=false}},'gold');draft.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send.click()}});panel.append(tabbar,feed,child('div',{class:'message-send'},draft,send),p(room==='general'?T('🌐 Çeviri isteğe bağlıdır. Çevirdiğin genel sohbet metni MyMemory adlı dış servise iletilir. Dilini Profil kısmında seçebilirsin.','🌐 Translation is optional. General chat text you translate goes to the external MyMemory service. Choose your language in Profile.'):T('R4/R5 yönetim kanalındaki mesajlar dış çeviri servisine gönderilmez.','Leadership messages are not sent to a translation provider.'),'note-sm'));content(target,panel);
+ async function refresh(){const next=await db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60);assert(null,next.error);feed.replaceChildren();for(const x of next.data.reverse()){const item=child('div',{class:'bubble '+(x.author_id===session.user.id?'mine':'')},small(nick(x.author_id,mp)+' · '+formatDate(x.created_at)),p(x.body));if(room==='general')item.append(makeChatTranslate(x));if(manager())item.append(btn('× '+T('Sil','Delete'),async()=>{if(!confirm(T('Mesaj silinsin mi?','Delete message?')))return;await run(async()=>{assert(null,(await db.from('room_messages').delete().eq('id',x.id)).error);refresh()})},'subtlebtn'));feed.append(item)}feed.scrollTop=feed.scrollHeight}
  await refresh();sub('room_messages',`room_id=eq.${room}`,()=>refresh().catch(err));
 }catch(e){content(target,notice(e.message))}}
 
@@ -209,7 +278,27 @@ async function showThread(target,threadId,map){clearSubscriptions();loading(targ
  await refresh();sub('dm_messages',`thread_id=eq.${threadId}`,()=>refresh().catch(err));
 }catch(e){content(target,notice(e.message))}}
 
-async function showProfile(target){const display=input('Display name'),game=input('Game name');display.value=profile.display_name;game.value=profile.game_name;display.maxLength=48;game.maxLength=80;const panel=card(heading(T('Profilim','My profile')),p(session.user.email?.endsWith('@accounts.example')?T('Kullanıcı adı: ','Username: ')+(session.user.user_metadata?.login_username||'—'):T('E-posta: ','Email: ')+session.user.email),p(T('Site rütbesi: ','Site rank: ')+role()),p(T('Durum: ','Status: ')+profile.approval_status),labelField(T('Görünen ad','Display name'),display),labelField(T('Oyun içi ad','Game name'),game),btn(T('Profili kaydet','Save profile'),async()=>{await run(async()=>{assert(null,(await db.from('profiles').update({display_name:display.value,game_name:game.value}).eq('id',session.user.id)).error);await syncAuth();toast(T('Profil güncellendi','Profile updated'))})},'gold'),child('div',{class:'spacer'}),btn(T('Şifremi değiştir','Change password'),()=>authDialog('change')));content(target,panel)}
+async function showProfile(target){
+ const display=input('Display name'),game=input('Game name');
+ display.value=profile.display_name;game.value=profile.game_name;display.maxLength=48;game.maxLength=80;
+ const preferred=select(translationLanguages);preferred.value=preferredTranslationLanguage();
+ const panel=card(heading(T('Profilim','My profile')),
+  p(session.user.email?.endsWith('@accounts.example')?T('Kullanıcı adı: ','Username: ')+(session.user.user_metadata?.login_username||'—'):T('E-posta: ','Email: ')+session.user.email),
+  p(T('Site rütbesi: ','Site rank: ')+role()),p(T('Durum: ','Status: ')+profile.approval_status),
+  labelField(T('Görünen ad','Display name'),display),
+  labelField(T('Oyun içi ad','Game name'),game),
+  labelField(T('Tercih ettiğim çeviri dili','My preferred translation language'),preferred),
+  p(T('Genel sohbet mesajları 🌐 Çevir düğmesiyle bu dile çevrilir.','Use 🌐 Translate in General Chat to translate into this language.'),'note-sm'),
+  btn(T('Profili kaydet','Save profile'),async()=>{
+   await run(async()=>{
+    assert(null,(await db.from('profiles').update({display_name:display.value,game_name:game.value}).eq('id',session.user.id)).error);
+    assert(null,(await db.auth.updateUser({data:{preferred_language:preferred.value}})).error);
+    await syncAuth();toast(T('Profil ve çeviri dili kaydedildi','Profile and translation language saved'));
+   });
+  },'gold'),
+  child('div',{class:'spacer'}),btn(T('Şifremi değiştir','Change password'),()=>authDialog('change'))
+ );content(target,panel)
+}
 
 async function showAdmin(target){if(!manager())return content(target,notice('Not authorized'));loading(target);try{const [pending,approved,reports,audit]=await Promise.all([db.from('profiles').select('*').eq('approval_status','pending').order('created_at'),db.from('profiles').select('*').eq('approval_status','approved').order('game_name').limit(150),db.from('dm_reports').select('*').order('created_at',{ascending:false}).limit(20),db.from('audit_log').select('*').order('recorded_at',{ascending:false}).limit(20)]);for(const r of [pending,approved,reports,audit])assert(null,r.error);
  const box=card(heading(T('Üye yönetimi','Member management')));for(const x of pending.data)box.append(listLine([child('strong',{text:x.game_name+' ('+x.display_name+')'}),small(formatDate(x.created_at))],[btn(T('Onayla','Approve'),()=>decide(x.id,'approved')),btn(T('Reddet','Reject'),()=>decide(x.id,'rejected'),'btn-danger')]));if(!pending.data.length)box.append(empty(T('Bekleyen eski kayıt yok. Yeni üyeler otomatik katılır.','No old pending accounts. New members join automatically.')));
