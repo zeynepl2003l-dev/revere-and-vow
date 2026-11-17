@@ -64,3 +64,20 @@
 .rav-alert-item p{line-height:1.55;color:#faf2ea;white-space:pre-wrap}
 .rav-push-controls{margin:12px 0 20px;padding:16px;border:1px solid #595652;border-radius:10px;background:#1c2328}
 .rav-push-controls .actions{display:flex;flex-wrap:wrap;gap:8px}
+
+
+/* Public Android beta distribution card. Does not cache or embed the APK. */
+.lang-en{display:none}
+html[lang="en"] .lang-en{display:inline}
+html[lang="en"] .lang-tr{display:none}
+.android-beta{display:flex;align-items:center;justify-content:space-between;gap:15px;flex-wrap:wrap;margin-top:20px;max-width:750px;padding:16px 18px;border:1px solid #91643d;background:linear-gradient(110deg,#29251f,#1a2025);border-radius:9px;box-shadow:0 8px 30px #0003}
+.android-beta-copy{display:flex;flex-direction:column;gap:7px;flex:1 1 245px}
+.android-beta-copy strong{color:#f6e8d6;font-size:15px}
+.android-beta-copy small{color:#c2bcb4;font-size:12px;line-height:1.55}
+.android-beta-copy small.lang-en{display:none}
+html[lang="en"] .android-beta-copy small.lang-en{display:block}
+html[lang="en"] .android-beta-copy small.lang-tr{display:none}
+.beta-tag{color:#ffbf79;font-size:11px;letter-spacing:1px;margin-left:5px;white-space:nowrap}
+.android-beta-link{display:inline-flex;align-items:center;justify-content:center;gap:10px;text-align:center;background:linear-gradient(115deg,#eeab57,#c87443);color:#171d20;border:1px solid #f5ba72;border-radius:6px;font-size:14px;line-height:1.35;font-weight:800;text-decoration:none;padding:13px 16px;min-height:44px;transition:filter .15s ease}
+.android-beta-link:hover{filter:brightness(1.12)}
+@media(max-width:630px){.android-beta{align-items:stretch}.android-beta-link{width:100%}}
