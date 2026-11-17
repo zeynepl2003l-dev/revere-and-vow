@@ -7,7 +7,7 @@ const publicKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
 function response(payload: unknown, status = 200, origin = siteOrigin) {
-  return new Response(JSON.stringify(payload), {
+  return new Response(status === 204 ? null : JSON.stringify(payload), {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
@@ -96,7 +96,7 @@ Deno.serve(async req => {
       }
       const publicClient = createClient(supabaseUrl, publicKey, { auth: { persistSession: false, autoRefreshToken: false } });
       const { data: signIn, error: signError } = await publicClient.auth.signInWithPassword({ email: internalEmail, password: String(body.password) });
-      if (signError || !signIn.session) return response({ error: "Hesap oluşturuldu. Kullanıcı adı ve şifrenle giriş yap.", recovery_code: recoveryCode }, 202);
+      if (signError || !signIn.session) return response({ warning: "Hesap oluşturuldu. Kurtarma kodunu kaydet, ardından kullanıcı adın ve şifrenle giriş yap.", recovery_code: recoveryCode }, 202);
       return response({ access_token: signIn.session.access_token, refresh_token: signIn.session.refresh_token, recovery_code: recoveryCode }, 201);
     }
     const { data: account, error: lookupError } = await admin.from("rav_username_accounts")
