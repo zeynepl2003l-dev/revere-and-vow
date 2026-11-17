@@ -53,3 +53,14 @@
 .pwa-help>p{font-size:14px;line-height:1.7;margin:8px 0 20px}
 .pwa-help button{width:100%}
 @media(max-width:480px){.headerbar{gap:7px}.topactions{gap:5px}.pwa-install-btn{width:32px;height:34px;flex-basis:32px;font-size:17px}.brand{gap:7px}.brand strong{font-size:11px}.brand small{letter-spacing:1.2px}.topactions button.small{padding:7px!important}}
+
+/* RAV server-authorized urgent notifications */
+.rav-alert-compose{margin:20px 0;padding:18px;border:1px solid #bb7045;background:#32251f;border-radius:10px;display:flex;flex-direction:column;gap:8px}
+.rav-alert-compose h3{color:#f4af6c;margin:0 0 8px}
+.rav-alert-compose textarea{min-height:85px;max-width:100%}
+.rav-alert-compose button.gold{align-self:flex-start}
+.rav-alert-item{margin:10px 0;padding:14px 17px;border-left:4px solid #e99851;background:#302923;border-radius:6px;overflow-wrap:anywhere}
+.rav-alert-item strong{color:#f4b679}
+.rav-alert-item p{line-height:1.55;color:#faf2ea;white-space:pre-wrap}
+.rav-push-controls{margin:12px 0 20px;padding:16px;border:1px solid #595652;border-radius:10px;background:#1c2328}
+.rav-push-controls .actions{display:flex;flex-wrap:wrap;gap:8px}

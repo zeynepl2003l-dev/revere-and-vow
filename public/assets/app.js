@@ -157,6 +157,8 @@ async function syncAuth(){
   session=r.data.session;
   if(session?.user){const p=await db.from('profiles').select('*').eq('id',session.user.id).maybeSingle();assert(null,p.error);profile=p.data||null}
   else profile=null;
+  await ensureRavAlertListener();
+  if(alertsOptedIn()&&ravNativeToken)void registerRavNativeToken();
   render();
  }catch(e){err(e)}
 }
@@ -164,11 +166,11 @@ function render(){clearSubscriptions();$('#public-screen').hidden=!!session;$('#
 function renderPending(){
  root.replaceChildren(card(h2(T('Hesap durumunuz','Your account status')),p(session.user.email),child('div',{class:'status-row'},statusBadge()),p(!profile?T('Profil henüz oluşturulamadı. Yöneticiyle iletişime geçin.','Profile not found; contact a site admin.'):profile.approval_status==='pending'?T('Hesabın hazırlanıyor. Sayfayı yenilemeyi deneyebilirsin.','Your account is being prepared. Please try refreshing.'):T('Bu hesap onaylanmadı veya erişimi kaldırıldı.','This account is not approved.')),child('div',{class:'actions'},btn(T('Durumu yenile','Refresh'),syncAuth),btn(T('Çıkış yap','Sign out'),logout))));
 }
-const navDefs=[['home','⌂',()=>T('Panel','Dashboard')],['roster','♟',()=>T('Üye Kadrosu','Roster')],['announcements','▤',()=>T('Duyurular','Announcements')],['events','◷',()=>T('Etkinlikler','Events')],['forum','▣',()=>T('Forum','Forum')],['chat','⌁',()=>T('Canlı Sohbet','Live Chat')],['dm','✉',()=>T('Özel Mesajlar','Messages')],['profile','◉',()=>T('Profil','Profile')],['admin','⚙',()=>T('Yönetim','Admin')]];
-const pages={home:showDashboard,roster:showRoster,announcements:showAnnouncements,events:showEvents,forum:showForum,chat:showChat,dm:showDM,profile:showProfile,admin:showAdmin};
+const navDefs=[['home','⌂',()=>T('Panel','Dashboard')],['roster','♟',()=>T('Üye Kadrosu','Roster')],['announcements','▤',()=>T('Duyurular','Announcements')],['alerts','🚨',()=>T('Acil Bildirim','Urgent Alerts')],['events','◷',()=>T('Etkinlikler','Events')],['forum','▣',()=>T('Forum','Forum')],['chat','⌁',()=>T('Canlı Sohbet','Live Chat')],['dm','✉',()=>T('Özel Mesajlar','Messages')],['profile','◉',()=>T('Profil','Profile')],['admin','⚙',()=>T('Yönetim','Admin')]];
+const pages={home:showDashboard,roster:showRoster,announcements:showAnnouncements,alerts:showAlerts,events:showEvents,forum:showForum,chat:showChat,dm:showDM,profile:showProfile,admin:showAdmin};
 function renderPortal(){const shell=child('div',{class:'app-shell'});const aside=child('aside',{class:'sidebar'});aside.append(h3('RAV / COMMAND'));for(const [key,icon,label] of navDefs){if(key==='admin'&&!manager())continue;aside.append(btn(icon+'  '+label(),()=>navigate(key),'side-link '+(section===key?'active':'')))}aside.append(child('div',{class:'home-exit'},btn(T('Çıkış','Log out'),logout,'subtlebtn')));shell.append(aside);const area=child('div',{id:'content-area'});shell.append(area);root.replaceChildren(shell);(pages[section]||pages.home)(area)}
 function navigate(key){section=key;activeTopic=null;activeThread=null;renderPortal();window.scrollTo({top:0,behavior:'smooth'})}
-async function logout(){await run(async()=>assert(null,(await db.auth.signOut()).error));session=null;profile=null;section='home';render()}
+async function logout(){await removeRavDevice();await stopRavAlertListener();await run(async()=>assert(null,(await db.auth.signOut()).error));session=null;profile=null;section='home';render()}
 const content=(target,...nodes)=>{target.replaceChildren(...nodes)};
 const loading=(target)=>content(target,card(empty(T('Yükleniyor…','Loading…'))));
 function notice(text){return child('div',{class:'notice'},p(text))}
@@ -190,6 +192,128 @@ async function showRoster(target){loading(target);try{
  async function editRecord(x){if(!manager())return;const power=prompt(T('Güç (milyon):','Power (millions):'),String(x.power_million));if(power==null)return;const number=Number(power);if(!Number.isFinite(number)||number<0){toast(T('Geçersiz sayı','Invalid number'));return}await run(async()=>{assert(null,(await db.from('roster').update({power_million:number}).eq('source_index',x.source_index)).error);toast(T('Güncellendi','Updated'));showRoster(target)})}
  draw();content(target,frame)
 }catch(e){content(target,notice(e.message))}}
+
+
+/* RAV urgent alerts: the server authorizes R4/R5/Site Admin, never this UI. */
+let ravNativeToken=null,ravTokenOwner=null,ravAlertChannel=null,ravAlertUserId=null;
+const alertsOptedIn=()=>localStorage.getItem('rav_android_push_optin')==='yes';
+async function registerRavNativeToken(){
+ if(!db||!session?.user||!profile||profile.approval_status!=='approved'||!alertsOptedIn()||!ravNativeToken)return;
+ if(ravTokenOwner===session.user.id)return;
+ const {data,error}=await db.functions.invoke('rav-register-device',{body:{action:'register',token:ravNativeToken}});
+ if(error||data?.error){console.warn('RAV device registration pending');return}
+ ravTokenOwner=session.user.id;
+ toast(T('🔔 Telefon bildirimleri kaydedildi','🔔 Phone notifications registered'));
+}
+window.ravReceivePushToken=(token)=>{
+ if(typeof token!=='string'||token.length<80||token.length>400)return;
+ ravNativeToken=token;ravTokenOwner=null;
+ void registerRavNativeToken();
+};
+window.ravNotificationPermission=(ok,configured)=>{
+ if(ok===true){toast(T('🔔 Bildirim izni açık; telefon kaydı hazırlanıyor.','🔔 Notifications allowed; registering your device.'))}
+ else if(configured===false)toast(T('Bildirim sunucusu için Firebase yapılandırması eksik.','Firebase configuration is required for push notifications.'));
+ else toast(T('Bildirim izni verilmedi.','Notification permission not granted.'));
+};
+async function stopRavAlertListener(){
+ if(ravAlertChannel&&db)await db.removeChannel(ravAlertChannel);
+ ravAlertChannel=null;ravAlertUserId=null;
+}
+async function ensureRavAlertListener(){
+ if(!db||!session?.user||profile?.approval_status!=='approved'){await stopRavAlertListener();return}
+ if(ravAlertChannel&&ravAlertUserId===session.user.id)return;
+ await stopRavAlertListener();
+ const userId=session.user.id;
+ ravAlertUserId=userId;
+ ravAlertChannel=db.channel('rav-urgent-'+userId)
+  .on('postgres_changes',{event:'INSERT',schema:'public',table:'rav_alerts'},payload=>{
+   const a=payload.new||{};
+   if(a.sender_id===userId)return;
+   if(a.target_user_id!==null&&a.target_user_id!==userId)return;
+   toast('🚨 RAV: '+String(a.message||'').slice(0,130));
+   if(section==='alerts'&&$('#content-area'))void showAlerts($('#content-area'));
+  }).subscribe();
+}
+async function removeRavDevice(){
+ if(!db||!session?.user||!ravNativeToken)return;
+ await db.functions.invoke('rav-register-device',{body:{action:'unregister',token:ravNativeToken}});
+ ravTokenOwner=null;
+}
+function notificationOptInControl(){
+ const text=p(T(
+  '🚨 R4/R5 acil bildirimleri: Uygulama kapalıyken sesli bildirim almak için Android uygulamasında izin ver. Şimdilik Firebase sunucu kurulumu tamamlanınca aktif olacaktır.',
+  '🚨 R4/R5 urgent alerts: Allow notifications in the Android app to get audible alerts when it is closed. Firebase server setup must also be completed.'
+ ),'note-sm');
+ const enable=btn('🔔 '+T('Telefon bildirimlerini aç','Enable phone notifications'),()=>{
+  if(window.ravNativeAndroid!==true){
+   toast(T('Telefon bildirimlerini açmak için RAV Android APK uygulamasını kullan.','Open the RAV Android APK to enable phone notifications.'));return;
+  }
+  localStorage.setItem('rav_android_push_optin','yes');
+  window.location.href='ravapp://notifications/enable';
+ },'gold');
+ const disable=btn('🔕 '+T('Bildirimleri kapat','Disable notifications'),async()=>{
+  await removeRavDevice();
+  localStorage.removeItem('rav_android_push_optin');
+  toast(T('RAV bildirimleri bu cihazda kapatıldı.','RAV alerts turned off on this device.'));
+ },'subtlebtn');
+ return child('div',{class:'rav-push-controls'},text,child('div',{class:'actions'},enable,disable));
+}
+async function sendRavUrgentAlert(message,target='all'){
+ const recipient=target.startsWith('member:')?target.slice(7):null;
+ const payload={audience:recipient?'member':'all',recipient_id:recipient,message};
+ const {data,error}=await db.functions.invoke('rav-send-alert',{body:payload});
+ if(error)throw error;
+ if(data?.error)throw new Error(data.error);
+ if(!data?.ok)throw new Error(T('Bildirim gönderilemedi','Unable to send alert'));
+ if(!data.push_configured)toast(T(
+  '🚨 Uyarı yayınlandı; telefon bildirimi için Firebase kurulumu gerekiyor.',
+  '🚨 Alert posted. Firebase must be configured for phone delivery.'
+ ));
+ else toast(T('🚨 Uyarı kaydedildi. Telefona gönderilen: ','🚨 Alert posted. Sent to phones: ')+String(data.push_sent||0));
+ return data;
+}
+async function showAlerts(target){
+ loading(target);
+ try{
+  const [r,mp]=await Promise.all([
+    db.from('rav_alerts').select('id,sender_id,target_user_id,message,created_at').order('created_at',{ascending:false}).limit(50),
+    getDisplayMap()
+  ]);
+  assert(null,r.error);
+  const box=card(heading(T('🚨 RAV Acil Bildirim Merkezi','🚨 RAV Urgent Alerts')),
+   p(T('Önemli ittifak duyuruları. Sadece yetkili R4, R5 ve Site Admin gönderebilir.','Important alliance alerts. Only authorized R4, R5 and Site Admin can send.'),'note-sm'),
+   notificationOptInControl());
+  if(manager()){
+   const memberOptions=Object.values(mp).filter(x=>x.id!==session.user.id)
+    .sort((a,b)=>(a.game_name||'').localeCompare(b.game_name||''))
+    .map(x=>['member:'+x.id,'@'+(x.game_name||x.display_name)]);
+   const targetChoice=select([['all','📣 @all — '+T('Tüm üyeler','All members')],...memberOptions]);
+   const body=textarea(T('Örn: Kalkan açın, saldırı geliyor!','Example: Activate shields, attack incoming!'));
+   body.maxLength=240;
+   const sendButton=btn('🚨 '+T('Acil bildirimi gönder','Send urgent alert'),async()=>{
+    const msg=body.value.trim();if(msg.length<3)return toast(T('En az 3 karakter yaz.','Enter at least 3 characters.'));
+    if(!confirm(T('Bu uyarı seçilen üyelere gönderilsin mi?','Send this alert to the selected members?')))return;
+    sendButton.disabled=true;
+    try{await sendRavUrgentAlert(msg,targetChoice.value);body.value='';await showAlerts(target)}
+    catch(e){err(e)}finally{sendButton.disabled=false}
+   },'gold');
+   box.append(child('div',{class:'rav-alert-compose'},h3(T('R4/R5 Acil Çağrı','R4/R5 Emergency Call')),
+    labelField(T('Kime','Recipients'),targetChoice),
+    labelField(T('Uyarı mesajı','Alert text'),body),sendButton,
+    p(T('Yetki kontrolü sunucuda yapılır. En fazla 45 saniyede bir ve saatte 8 uyarı gönderilebilir.','Server-side permission checks. Max one alert every 45 seconds and eight per hour.'),'note-sm')));
+  }
+  box.append(h3(T('Bildirim geçmişi','Alert history')));
+  for(const x of r.data||[]){
+   const author=nick(x.sender_id,mp);
+   const who=x.target_user_id?'@'+nick(x.target_user_id,mp):'@all';
+   box.append(child('div',{class:'rav-alert-item'},
+    child('strong',{text:'🚨 '+who+' · '+author}),
+    p(x.message),small(formatDate(x.created_at))));
+  }
+  if(!r.data?.length)box.append(empty(T('Henüz acil bildirim yok.','No urgent alerts yet.')));
+  content(target,box);
+ }catch(e){content(target,notice(e?.message||String(e)))}
+}
 
 async function showAnnouncements(target){loading(target);try{const r=await db.from('announcements').select('*').order('pinned',{ascending:false}).order('created_at',{ascending:false}).limit(50);assert(null,r.error);const panel=card(heading(T('Duyurular','Announcements')));if(manager()){const title=input(T('Duyuru başlığı','Announcement title'));const body=textarea(T('Duyuru içeriği','Content'));panel.append(child('div',{class:'new-post'},h3(T('Duyuru yayınla','Post announcement')),labelField(T('Başlık','Title'),title),labelField(T('Metin','Body'),body),btn(T('Yayınla','Publish'),async()=>{await run(async()=>{assert(null,(await db.from('announcements').insert({title:title.value,body:body.value,author_id:session.user.id})).error);showAnnouncements(target)})},'gold')))}
  for(const x of r.data)panel.append(listLine([child('strong',{text:x.title}),p(x.body),small(formatDate(x.created_at))],manager()?[btn(T('Sil','Delete'),async()=>{if(!confirm(T('Duyuru silinsin mi?','Delete announcement?')))return;await run(async()=>{assert(null,(await db.from('announcements').delete().eq('id',x.id)).error);showAnnouncements(target)})},'btn-danger')]:[]));if(!r.data.length)panel.append(empty(T('Henüz duyuru yok.','No announcements yet.')));content(target,panel)}catch(e){content(target,notice(e.message))}}
@@ -273,7 +397,23 @@ function makeChatTranslate(msg){
  return child('div',{class:'chat-translate-wrap'},toggle,result);
 }
 
-async function showChat(target,room='general'){clearSubscriptions();loading(target);try{if(room==='leadership'&&!manager())throw new Error('Not authorized');const [r,mp]=await Promise.all([db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60),getDisplayMap()]);assert(null,r.error);const panel=card(heading(T('Canlı ittifak sohbeti','Alliance live chat')));const tabbar=child('div',{class:'tabs'},btn('# '+T('Genel','General'),()=>showChat(target,'general'),'mini-btn '+(room==='general'?'active':'')),...(manager()?[btn('# '+T('Yönetim','Leadership'),()=>showChat(target,'leadership'),'mini-btn '+(room==='leadership'?'active':''))]:[]));const feed=child('div',{class:'message-feed',role:'log','aria-label':T('Sohbet mesajları','Chat messages')});const draft=input(T('Mesaj yaz…','Write message…'));draft.maxLength=1200;const send=btn(T('Gönder','Send'),async()=>{const msg=draft.value.trim();if(!msg)return;send.disabled=true;try{assert(null,(await db.from('room_messages').insert({room_id:room,author_id:session.user.id,body:msg})).error);draft.value='';await refresh()}catch(e){err(e)}finally{send.disabled=false}},'gold');draft.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send.click()}});panel.append(tabbar,feed,child('div',{class:'message-send'},draft,send),p(room==='general'?T('🌐 Çeviri isteğe bağlıdır. Çevirdiğin genel sohbet metni MyMemory adlı dış servise iletilir. Dilini Profil kısmında seçebilirsin.','🌐 Translation is optional. General chat text you translate goes to the external MyMemory service. Choose your language in Profile.'):T('R4/R5 yönetim kanalındaki mesajlar dış çeviri servisine gönderilmez.','Leadership messages are not sent to a translation provider.'),'note-sm'));content(target,panel);
+async function showChat(target,room='general'){clearSubscriptions();loading(target);try{if(room==='leadership'&&!manager())throw new Error('Not authorized');const [r,mp]=await Promise.all([db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60),getDisplayMap()]);assert(null,r.error);const panel=card(heading(T('Canlı ittifak sohbeti','Alliance live chat')));const tabbar=child('div',{class:'tabs'},btn('# '+T('Genel','General'),()=>showChat(target,'general'),'mini-btn '+(room==='general'?'active':'')),...(manager()?[btn('# '+T('Yönetim','Leadership'),()=>showChat(target,'leadership'),'mini-btn '+(room==='leadership'?'active':''))]:[]));const feed=child('div',{class:'message-feed',role:'log','aria-label':T('Sohbet mesajları','Chat messages')});const draft=input(T('Mesaj yaz…','Write message…'));draft.maxLength=1200;const recipientChoice=manager()&&room==='general'?select([['normal',T('Normal mesaj','Normal message')],['all','🚨 @all — '+T('Acil bildirim','Urgent alert')],...Object.values(mp).filter(x=>x.id!==session.user.id).map(x=>['member:'+x.id,'🚨 @'+(x.game_name||x.display_name)])]):null;
+ const send=btn(T('Gönder','Send'),async()=>{
+   const raw=draft.value.trim();if(!raw)return;
+   send.disabled=true;
+   try{
+    const inlineAll=room==='general'&&manager()&&/^@all(?:\s|$)/i.test(raw);
+    if(room==='general'&&manager()&&(inlineAll||(recipientChoice&&recipientChoice.value!=='normal'))){
+      const text=inlineAll?raw.replace(/^@all\s*/i,'').trim():raw;
+      if(text.length<3)throw new Error(T('Uyarı metni çok kısa.','Alert is too short.'));
+      await sendRavUrgentAlert(text,inlineAll?'all':recipientChoice.value);
+      draft.value='';if(recipientChoice)recipientChoice.value='normal';await refresh();
+    }else{
+      assert(null,(await db.from('room_messages').insert({room_id:room,author_id:session.user.id,body:raw})).error);
+      draft.value='';await refresh();
+    }
+   }catch(e){err(e)}finally{send.disabled=false}
+ },'gold');draft.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send.click()}});panel.append(tabbar,feed);if(recipientChoice)panel.append(labelField(T('Bildirim / etiket','Notification / mention'),recipientChoice));panel.append(child('div',{class:'message-send'},draft,send),p(room==='general'?T('🌐 Çeviri isteğe bağlıdır. Çevirdiğin genel sohbet metni MyMemory adlı dış servise iletilir. Dilini Profil kısmında seçebilirsin.','🌐 Translation is optional. General chat text you translate goes to the external MyMemory service. Choose your language in Profile.'):T('R4/R5 yönetim kanalındaki mesajlar dış çeviri servisine gönderilmez.','Leadership messages are not sent to a translation provider.'),'note-sm'));content(target,panel);
  async function refresh(){const next=await db.from('room_messages').select('*').eq('room_id',room).order('created_at',{ascending:false}).limit(60);assert(null,next.error);feed.replaceChildren();for(const x of next.data.reverse()){const item=child('div',{class:'bubble '+(x.author_id===session.user.id?'mine':'')},small(nick(x.author_id,mp)+' · '+formatDate(x.created_at)),p(x.body));if(room==='general')item.append(makeChatTranslate(x));if(manager())item.append(btn('× '+T('Sil','Delete'),async()=>{if(!confirm(T('Mesaj silinsin mi?','Delete message?')))return;await run(async()=>{assert(null,(await db.from('room_messages').delete().eq('id',x.id)).error);refresh()})},'subtlebtn'));feed.append(item)}feed.scrollTop=feed.scrollHeight}
  await refresh();sub('room_messages',`room_id=eq.${room}`,()=>refresh().catch(err));
 }catch(e){content(target,notice(e.message))}}
