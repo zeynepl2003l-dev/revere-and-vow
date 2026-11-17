@@ -1,0 +1,9 @@
+<resources>
+  <style name="RavTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:statusBarColor">#101419</item>
+    <item name="android:navigationBarColor">#101419</item>
+    <item name="android:windowBackground">#101419</item>
+    <item name="android:colorAccent">#EFAA55</item>
+  </style>
+</resources>
