@@ -1,0 +1,14 @@
+# Local secrets and Supabase private data
+.env
+.env.*
+!.env.example
+.netlify/
+private/
+db/
+secrets/
+*.pem
+*.key
+*service_role*
+*secret_key*
+*.sql
+**/__pycache__/
