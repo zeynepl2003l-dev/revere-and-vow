@@ -195,6 +195,7 @@ async function showRoster(target){loading(target);try{
 
 
 /* RAV urgent alerts: the server authorizes R4/R5/Site Admin, never this UI. */
+if(typeof window.ravNativePushToken==='string')setTimeout(()=>window.ravReceivePushToken?.(window.ravNativePushToken),0);
 let ravNativeToken=null,ravTokenOwner=null,ravAlertChannel=null,ravAlertUserId=null;
 const alertsOptedIn=()=>localStorage.getItem('rav_android_push_optin')==='yes';
 async function registerRavNativeToken(){
@@ -467,6 +468,7 @@ async function init(){translatePublic();$('#lang-toggle').addEventListener('clic
   db.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY')setTimeout(()=>authDialog('change'),0);setTimeout(()=>syncAuth(),0)});
   await syncAuth();
   if(new URLSearchParams(location.search).get('admin-setup')==='1')authDialog('admin-signup');
+  if(new URLSearchParams(location.search).get('screen')==='alerts'&&session?.user&&profile?.approval_status==='approved')navigate('alerts');
  }catch(e){err(e)}
 }
 init();

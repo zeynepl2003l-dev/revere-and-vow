@@ -1,6 +1,17 @@
 package com.rav.alliance;
 
 import android.app.Activity;
+import android.Manifest;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.provider.Settings;
+import android.webkit.WebResourceResponse;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.FirebaseOptions;
+import com.google.firebase.messaging.FirebaseMessaging;
+import org.json.JSONObject;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.Color;
@@ -25,12 +36,16 @@ public final class MainActivity extends Activity {
     private static final String HOME = "https://rav377.netlify.app/";
     private static final String TRUSTED_HOST = "rav377.netlify.app";
     private static final int PICK_FILE = 3107;
+    private static final int REQUEST_NOTIFICATION_PERMISSION = 3414;
+    private static final String RAV_PUSH_PREFS = "rav_fcm";
     private WebView webView;
     private ProgressBar progress;
     private android.webkit.ValueCallback<Uri[]> fileCallback;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        setupNotificationChannel();
+        initializeFirebaseIfConfigured();
         getWindow().setStatusBarColor(Color.rgb(16, 20, 25));
         getWindow().setNavigationBarColor(Color.rgb(16, 20, 25));
 
@@ -63,6 +78,14 @@ public final class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
 
         webView.setWebViewClient(new WebViewClient() {
+            @Override public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                if (isTrustedSite(url)) {
+                    view.evaluateJavascript("window.ravNativeAndroid=true;",null);
+                    String savedToken=getSharedPreferences(RAV_PUSH_PREFS,MODE_PRIVATE).getString("fcm_token",null);
+                    if(savedToken!=null)passPushTokenToSite(savedToken);
+                }
+            }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return handleNavigation(request.getUrl());
             }
@@ -96,12 +119,96 @@ public final class MainActivity extends Activity {
             }
         });
         if (state != null) webView.restoreState(state);
-        else webView.loadUrl(HOME);
+        else webView.loadUrl("alerts".equals(getIntent().getStringExtra("screen"))?HOME+"?screen=alerts":HOME);
+    }
+
+    private boolean isTrustedSite(String url) {
+        if (url == null) return false;
+        Uri uri = Uri.parse(url);
+        return "https".equalsIgnoreCase(uri.getScheme()) && TRUSTED_HOST.equalsIgnoreCase(uri.getHost());
+    }
+
+    private void setupNotificationChannel(){
+        if(Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager notifications=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
+        if(notifications.getNotificationChannel("rav_urgent")!=null)return;
+        NotificationChannel channel=new NotificationChannel(
+            "rav_urgent","RAV Acil İttifak Bildirimleri",NotificationManager.IMPORTANCE_HIGH);
+        channel.setDescription("R4/R5 ve Site Admin'in önemli ittifak uyarıları.");
+        channel.enableVibration(true);
+        channel.setSound(Settings.System.DEFAULT_NOTIFICATION_URI,
+            new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION).build());
+        notifications.createNotificationChannel(channel);
+    }
+
+    private boolean initializeFirebaseIfConfigured(){
+        if(BuildConfig.RAV_FIREBASE_APP_ID.isEmpty()||BuildConfig.RAV_FIREBASE_API_KEY.isEmpty()
+           ||BuildConfig.RAV_FIREBASE_SENDER_ID.isEmpty()||BuildConfig.RAV_FIREBASE_PROJECT_ID.isEmpty())
+            return false;
+        if(FirebaseApp.getApps(this).isEmpty()){
+            FirebaseOptions options=new FirebaseOptions.Builder()
+                .setApplicationId(BuildConfig.RAV_FIREBASE_APP_ID)
+                .setApiKey(BuildConfig.RAV_FIREBASE_API_KEY)
+                .setGcmSenderId(BuildConfig.RAV_FIREBASE_SENDER_ID)
+                .setProjectId(BuildConfig.RAV_FIREBASE_PROJECT_ID).build();
+            FirebaseApp.initializeApp(this,options);
+        }
+        return true;
+    }
+
+    private void passPushTokenToSite(String token){
+        if(webView==null||!isTrustedSite(webView.getUrl()))return;
+        webView.evaluateJavascript(
+            "window.ravNativeAndroid=true;"+
+            "window.ravNativePushToken="+JSONObject.quote(token)+";"+
+            "if(window.ravReceivePushToken)window.ravReceivePushToken("+JSONObject.quote(token)+");",null);
+    }
+
+    private void notifySite(boolean permitted,boolean configured){
+        if(webView==null||!isTrustedSite(webView.getUrl()))return;
+        webView.evaluateJavascript("if(window.ravNotificationPermission)window.ravNotificationPermission("+
+            permitted+","+configured+");",null);
+    }
+
+    private void enableNotifications(){
+        if(!initializeFirebaseIfConfigured()){notifySite(false,false);return;}
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQUEST_NOTIFICATION_PERMISSION);
+            return;
+        }
+        FirebaseMessaging.getInstance().setAutoInitEnabled(true);
+        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(task->{
+            if(!task.isSuccessful()){notifySite(false,true);return;}
+            String token=task.getResult();
+            if(token!=null){
+                getSharedPreferences(RAV_PUSH_PREFS,MODE_PRIVATE).edit().putString("fcm_token",token).apply();
+                passPushTokenToSite(token);notifySite(true,true);
+            }
+        });
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
+        if(requestCode==REQUEST_NOTIFICATION_PERMISSION){
+            if(grantResults.length>0&&grantResults[0]==PackageManager.PERMISSION_GRANTED)enableNotifications();
+            else notifySite(false,true);
+        }
+    }
+
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if("alerts".equals(intent.getStringExtra("screen"))&&webView!=null)webView.loadUrl(HOME+"?screen=alerts");
     }
 
     private boolean handleNavigation(Uri uri) {
         if (uri == null) return true;
         String scheme = uri.getScheme();
+        if("ravapp".equalsIgnoreCase(scheme) && "notifications".equalsIgnoreCase(uri.getHost()) &&
+           "/enable".equals(uri.getPath())){
+            enableNotifications();
+            return true;
+        }
         String host = uri.getHost();
         if ("https".equalsIgnoreCase(scheme) && TRUSTED_HOST.equalsIgnoreCase(host)) return false;
         if ("about".equalsIgnoreCase(scheme)) return false;

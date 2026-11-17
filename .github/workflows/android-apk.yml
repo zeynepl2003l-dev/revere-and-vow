@@ -27,6 +27,11 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Assemble debug APK
+        env:
+          RAV_FIREBASE_PROJECT_ID: ${{ vars.RAV_FIREBASE_PROJECT_ID }}
+          RAV_FIREBASE_APP_ID: ${{ vars.RAV_FIREBASE_APP_ID }}
+          RAV_FIREBASE_API_KEY: ${{ vars.RAV_FIREBASE_API_KEY }}
+          RAV_FIREBASE_SENDER_ID: ${{ vars.RAV_FIREBASE_SENDER_ID }}
         run: gradle --no-daemon --max-workers=2 -p android :app:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
