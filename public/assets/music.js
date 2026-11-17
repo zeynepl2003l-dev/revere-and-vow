@@ -1,5 +1,5 @@
 /* Revere & Vow — visitor-controlled alliance anthem.
- * Full song file: /assets/rav-marsi.mp3 (uploaded by repository owner).
+ * Song file: /assets/rav-marsi.mp3 or /assets/lv_0_20261104001139.mp3.
  * Browsers generally block unprompted audible autoplay.
  */
 (() => {
@@ -81,16 +81,22 @@
   // Only show the opening prompt if the uploaded MP3 actually exists.
   async function initialize() {
     try {
-      const url = new URL(song.getAttribute("src"), document.baseURI);
-      const response = await fetch(url, { method: "HEAD", cache: "no-store" });
-      if (!response.ok) return;
-      const mime = response.headers.get("content-type") || "";
-      if (!/audio\/|application\/octet-stream/i.test(mime)) return;
-      available = true;
-      player.hidden = false;
-      welcome.hidden = false;
-      setStatus("stopped");
-      refresh();
+      // Users can upload either the renamed file or their original phone filename.
+      const candidates = ["assets/rav-marsi.mp3", "assets/lv_0_20261104001139.mp3"];
+      for (const candidate of candidates) {
+        const url = new URL(candidate, document.baseURI);
+        const response = await fetch(url, { method: "HEAD", cache: "no-store" });
+        if (!response.ok) continue;
+        const mime = response.headers.get("content-type") || "";
+        if (!/audio\/|application\/octet-stream/i.test(mime)) continue;
+        song.src = url.href;
+        available = true;
+        player.hidden = false;
+        welcome.hidden = false;
+        setStatus("stopped");
+        refresh();
+        return;
+      }
     } catch {
       // No music file yet or connectivity is unavailable; keep site usable.
     }
