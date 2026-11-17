@@ -7,7 +7,8 @@ const T=(tr,en)=>lang==='tr'?tr:en;
 const formatDate=(v)=>{try{return new Date(v).toLocaleString(lang==='tr'?'tr-TR':'en-US',{dateStyle:'short',timeStyle:'short'})}catch{return String(v)}};
 const toast=(text)=>{const t=$('#toast');t.textContent=text;t.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.hidden=true,5000)};
 const err=(e)=>toast(e?.message||String(e));
-const role=()=>profile?.site_role||'R1',manager=()=>profile?.approval_status==='approved'&&['R4','R5'].includes(role()),owner=()=>manager()&&role()==='R5';
+const role=()=>profile?.site_role||'R1',manager=()=>profile?.approval_status==='approved'&&(profile?.is_site_admin===true||['R4','R5'].includes(role())),owner=()=>manager()&&(profile?.is_site_admin===true||role()==='R5');
+const displayRole=()=>profile?.is_site_admin===true?'Site Admin':role();
 const child=(tag,props={},...children)=>{const e=document.createElement(tag);for(const [k,v] of Object.entries(props||{})){if(v==null)continue;if(k==='class')e.className=v;else if(k==='text')e.textContent=v;else if(k==='value')e.value=v;else if(k==='checked')e.checked=!!v;else if(k.startsWith('on'))e.addEventListener(k.slice(2).toLowerCase(),v);else if(k==='disabled')e.disabled=!!v;else e.setAttribute(k,String(v));}for(const c of children.flat(Infinity)){if(c==null)continue;e.append(c instanceof Node?c:document.createTextNode(String(c)));}return e};
 const div=(...kids)=>child('div',{},...kids),p=(text,cls)=>child('p',{class:cls||'',text}),h2=(text)=>child('h2',{text}),h3=(text)=>child('h3',{text}),small=(text)=>child('small',{text});
 const btn=(text,fn,cls='mini-btn')=>child('button',{type:'button',class:cls,onclick:fn,text});
@@ -59,6 +60,7 @@ function authDialog(mode='signin'){
  if(!db){content.append(h2(T('Bağlantı kurulumu gerekli','Connection needed')),p(T('Site veritabanına bağlanılamadı.','Could not connect to the site database.')));if(!dlg.open)dlg.showModal();return}
  const title={
   signin:T('Üye girişi','Sign in'),signup:T('E-postasız hesap oluştur','Create account without email'),
+  'admin-signup':T('Özel site yöneticisi hesabı','Private site administrator account'),
   recover:T('Kurtarma koduyla şifre yenile','Reset password with recovery code'),
   'forgot-email':T('Eski e-postalı hesap kurtarma','Existing email account recovery'),
   change:T('Yeni şifre belirle','Set new password'),
@@ -67,13 +69,13 @@ function authDialog(mode='signin'){
   'Kayıt olmak için gerçek e-posta veya oyun hesabının şifresi istenmez.',
   'No real email or game account password is required to register.'
  )));
- const f=child('form');let login,pass,display,game,recovery;
+ const f=child('form');let login,pass,display,game,recovery,invite;
  if(mode!=='change'){
-  login=input(mode==='signup'?T('Kullanıcı adı (3–24 karakter)','Username (3–24 characters)'):
+  login=input(mode==='signup'||mode==='admin-signup'?T('Kullanıcı adı (3–24 karakter)','Username (3–24 characters)'):
     mode==='forgot-email'?T('Eski hesap e-postası','Existing account email'):
     T('Kullanıcı adı','Username'),mode==='forgot-email'?'email':'text');
   login.required=true;login.maxLength=mode==='forgot-email'?254:80;
-  login.autocomplete=mode==='signup'?'username':mode==='signin'?'username':'off';
+  login.autocomplete=mode==='signup'||mode==='admin-signup'?'username':mode==='signin'?'username':'off';
   f.append(labelField(mode==='forgot-email'?T('E-posta','Email'):
     mode==='signin'?T('Kullanıcı adı (eski hesaplar için e-posta)','Username (or email for old accounts)'):T('Kullanıcı adı','Username'),login));
  }
@@ -82,6 +84,11 @@ function authDialog(mode='signin'){
   game=input(T('Oyun içi ad','Game name'));
   display.required=true;game.required=true;display.maxLength=48;game.maxLength=80;
   f.append(labelField(T('Görünen ad','Display name'),display),labelField(T('Oyun adı','Game name'),game));
+ }
+ if(mode==='admin-signup'){
+  content.append(p(T('Bu hesap oyun rütbesi değildir ve normal üye listelerinde görünmez. Şifreni kendin belirle; davet kodu bir kez kullanılabilir. Genel sohbete yazılan mesajlar yine görünür.','This is a website-only administrator account, hidden from member lists. Choose your own password; the invite is single-use. Posts to general chat are still visible.'),'note-sm'));
+  invite=input(T('Tek kullanımlık admin davet kodu','One-time administrator invite code'));invite.required=true;invite.autocomplete='off';invite.maxLength=120;
+  f.append(labelField(T('Admin davet kodu','Admin invite code'),invite));
  }
  if(mode==='recover'){
   recovery=input(T('Kurtarma kodu','Recovery code'));recovery.required=true;recovery.autocomplete='off';
@@ -93,7 +100,7 @@ function authDialog(mode='signin'){
   pass.autocomplete=mode==='signin'?'current-password':'new-password';
   f.append(labelField(T('Şifre','Password'),pass));
  }
- f.append(btn(mode==='signup'?T('E-postasız kayıt ol','Sign up without email'):
+ f.append(btn(mode==='admin-signup'?T('Admin hesabımı oluştur','Create my admin account'):mode==='signup'?T('E-postasız kayıt ol','Sign up without email'):
    mode==='recover'?T('Kurtarma koduyla yenile','Recover account'):
    mode==='forgot-email'?T('Sıfırlama e-postası gönder','Send reset email'):
    mode==='change'?T('Şifreyi değiştir','Change password'):T('Giriş yap','Sign in'),()=>{},'gold'));
@@ -110,9 +117,11 @@ function authDialog(mode='signin'){
      assert(null,(await db.auth.setSession({access_token:result.access_token,refresh_token:result.refresh_token})).error);
     }
    }
-   if(mode==='signup'){
-    const result=await invokeUsernameAuth({action:'register',username:login.value.trim(),password:pass.value,
-      display_name:display.value.trim(),game_name:game.value.trim()});
+   if(mode==='signup'||mode==='admin-signup'){
+    const administrator=mode==='admin-signup';
+    const result=await invokeUsernameAuth(administrator?
+      {action:'admin-register',username:login.value.trim(),password:pass.value,invite_code:invite.value.trim()}:
+      {action:'register',username:login.value.trim(),password:pass.value,display_name:display.value.trim(),game_name:game.value.trim()});
     dlg.close();
     if(result.access_token&&result.refresh_token)assert(null,(await db.auth.setSession({access_token:result.access_token,refresh_token:result.refresh_token})).error);
     showRecoveryCode(result.recovery_code);
@@ -170,7 +179,7 @@ async function showDashboard(target){loading(target);try{
  const [ann,events,topics,rosterCount]=await Promise.all([db.from('announcements').select('id,title,created_at').order('created_at',{ascending:false}).limit(3),db.from('events').select('id,title,starts_at').gte('starts_at',new Date().toISOString()).order('starts_at').limit(3),db.from('forum_topics').select('id,title').order('created_at',{ascending:false}).limit(3),db.from('roster').select('source_index',{count:'exact',head:true})]);
  for(const r of [ann,events,topics,rosterCount])assert(null,r.error);
  const stats=child('div',{class:'grid-stats'},...[[T('Kadro','Roster'),rosterCount.count||0],[T('Yeni duyurular','Announcements'),ann.data.length],[T('Yaklaşan etkinlik','Upcoming events'),events.data.length]].map(([title,n])=>child('div',{class:'stat'},child('strong',{text:String(n)}),small(title))));
- const els=[child('div',{class:'banner'},p(T('RAV / ÜYE KOMUTA MERKEZİ','RAV / MEMBER COMMAND CENTER'),'section-title'),h2(T('Hoş geldin, ','Welcome, ')+(profile.display_name||'RAV')),p(T('Site yetkisi: ','Website role: ')+role()+' • '+T('Bu portal gerçek veritabanıyla çalışır.','This portal uses a real database.'))),stats];
+ const els=[child('div',{class:'banner'},p(T('RAV / ÜYE KOMUTA MERKEZİ','RAV / MEMBER COMMAND CENTER'),'section-title'),h2(T('Hoş geldin, ','Welcome, ')+(profile.display_name||'RAV')),p(T('Site yetkisi: ','Website role: ')+displayRole()+' • '+T('Bu portal gerçek veritabanıyla çalışır.','This portal uses a real database.'))),stats];
  for(const [label,arr,key,dateField] of [[T('Son duyurular','Recent announcements'),ann.data,'announcements','created_at'],[T('Yaklaşan etkinlikler','Upcoming events'),events.data,'events','starts_at'],[T('Forumdaki yeniler','Latest forum threads'),topics.data,'forum',null]]){const panel=card(heading(label,btn(T('Tümünü gör','View all'),()=>navigate(key))));for(const x of arr)panel.append(metaLine(x.title,dateField?formatDate(x[dateField]):''));if(!arr.length)panel.append(empty(T('Henüz içerik yok.','No content yet.')));els.push(panel)}content(target,...els)
 }catch(e){content(target,notice(e.message))}}
 
@@ -269,7 +278,7 @@ async function showChat(target,room='general'){clearSubscriptions();loading(targ
  await refresh();sub('room_messages',`room_id=eq.${room}`,()=>refresh().catch(err));
 }catch(e){content(target,notice(e.message))}}
 
-async function showDM(target){clearSubscriptions();loading(target);try{const [profiles,threads]=await Promise.all([db.from('profiles').select('id,game_name,display_name').eq('approval_status','approved').order('game_name'),db.from('dm_threads').select('*').order('created_at',{ascending:false}).limit(100)]);assert(null,profiles.error);assert(null,threads.error);const myPeers=(profiles.data||[]).filter(x=>x.id!==session.user.id);const map=Object.fromEntries(profiles.data.map(x=>[x.id,x]));const panel=card(heading(T('Özel mesajlar','Direct messages')));panel.append(p(T('Bu mesajları yalnızca konuşmanın katılımcıları okuyabilir. Uçtan uca şifreli değildir.','Only participants can read these messages. This is not end-to-end encrypted.'),'note-sm'));const to=select([['',T('Üye seç','Choose a member')],...myPeers.map(x=>[x.id,x.game_name])]);panel.append(child('div',{class:'toolbar'},to,btn(T('Sohbet başlat','Start chat'),async()=>{if(!to.value)return;await run(async()=>{const r=await db.rpc('start_dm',{target:to.value});assert(null,r.error);activeThread=r.data;await showThread(target,r.data,map)})})));if(activeThread)return showThread(target,activeThread,map);
+async function showDM(target){clearSubscriptions();loading(target);try{const [profiles,threads]=await Promise.all([db.from('profiles').select('id,game_name,display_name').eq('approval_status','approved').eq('is_site_admin',false).order('game_name'),db.from('dm_threads').select('*').order('created_at',{ascending:false}).limit(100)]);assert(null,profiles.error);assert(null,threads.error);const myPeers=(profiles.data||[]).filter(x=>x.id!==session.user.id);const map=Object.fromEntries(profiles.data.map(x=>[x.id,x]));const panel=card(heading(T('Özel mesajlar','Direct messages')));panel.append(p(T('Bu mesajları yalnızca konuşmanın katılımcıları okuyabilir. Uçtan uca şifreli değildir.','Only participants can read these messages. This is not end-to-end encrypted.'),'note-sm'));const to=select([['',T('Üye seç','Choose a member')],...myPeers.map(x=>[x.id,x.game_name])]);panel.append(child('div',{class:'toolbar'},to,btn(T('Sohbet başlat','Start chat'),async()=>{if(!to.value)return;await run(async()=>{const r=await db.rpc('start_dm',{target:to.value});assert(null,r.error);activeThread=r.data;await showThread(target,r.data,map)})})));if(activeThread)return showThread(target,activeThread,map);
  const threadsList=child('div');for(const x of threads.data){const peer=x.user_a===session.user.id?x.user_b:x.user_a;threadsList.append(listLine([child('strong',{text:map[peer]?.game_name||T('Üye','Member')}),small(formatDate(x.created_at))],[btn(T('Aç','Open'),()=>{activeThread=x.id;showThread(target,x.id,map)})]))}if(!threads.data.length)threadsList.append(empty(T('Henüz özel konuşman yok.','No direct messages yet.')));panel.append(h3(T('Konuşmalarım','My conversations')),threadsList);content(target,panel)
 }catch(e){content(target,notice(e.message))}}
 async function showThread(target,threadId,map){clearSubscriptions();loading(target);try{const r=await db.from('dm_threads').select('*').eq('id',threadId).single();assert(null,r.error);const other=r.data.user_a===session.user.id?r.data.user_b:r.data.user_a;const header=card(btn('← '+T('Konuşmalar','Conversations'),()=>{activeThread=null;showDM(target)},'back'),h2(map[other]?.game_name||T('Özel konuşma','Private chat')));const feed=child('div',{class:'message-feed',role:'log'});const draft=input(T('Özel mesaj yaz…','Write direct message…'));draft.maxLength=1200;const send=btn(T('Gönder','Send'),async()=>{if(!draft.value.trim())return;send.disabled=true;try{assert(null,(await db.from('dm_messages').insert({thread_id:threadId,author_id:session.user.id,body:draft.value.trim()})).error);draft.value='';await refresh()}catch(e){err(e)}finally{send.disabled=false}},'gold');draft.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();send.click()}});
@@ -284,7 +293,7 @@ async function showProfile(target){
  const preferred=select(translationLanguages);preferred.value=preferredTranslationLanguage();
  const panel=card(heading(T('Profilim','My profile')),
   p(session.user.email?.endsWith('@accounts.example')?T('Kullanıcı adı: ','Username: ')+(session.user.user_metadata?.login_username||'—'):T('E-posta: ','Email: ')+session.user.email),
-  p(T('Site rütbesi: ','Site rank: ')+role()),p(T('Durum: ','Status: ')+profile.approval_status),
+  p(T('Site rütbesi: ','Site rank: ')+displayRole()),p(T('Durum: ','Status: ')+profile.approval_status),
   labelField(T('Görünen ad','Display name'),display),
   labelField(T('Oyun içi ad','Game name'),game),
   labelField(T('Tercih ettiğim çeviri dili','My preferred translation language'),preferred),
@@ -300,10 +309,11 @@ async function showProfile(target){
  );content(target,panel)
 }
 
-async function showAdmin(target){if(!manager())return content(target,notice('Not authorized'));loading(target);try{const [pending,approved,reports,audit]=await Promise.all([db.from('profiles').select('*').eq('approval_status','pending').order('created_at'),db.from('profiles').select('*').eq('approval_status','approved').order('game_name').limit(150),db.from('dm_reports').select('*').order('created_at',{ascending:false}).limit(20),db.from('audit_log').select('*').order('recorded_at',{ascending:false}).limit(20)]);for(const r of [pending,approved,reports,audit])assert(null,r.error);
+async function showAdmin(target){if(!manager())return content(target,notice('Not authorized'));loading(target);try{const [pending,approved,reports,audit]=await Promise.all([db.from('profiles').select('*').eq('approval_status','pending').order('created_at'),db.from('profiles').select('*').eq('approval_status','approved').eq('is_site_admin',false).order('game_name').limit(150),db.from('dm_reports').select('*').order('created_at',{ascending:false}).limit(20),db.from('audit_log').select('*').order('recorded_at',{ascending:false}).limit(20)]);for(const r of [pending,approved,reports,audit])assert(null,r.error);
  const box=card(heading(T('Üye yönetimi','Member management')));for(const x of pending.data)box.append(listLine([child('strong',{text:x.game_name+' ('+x.display_name+')'}),small(formatDate(x.created_at))],[btn(T('Onayla','Approve'),()=>decide(x.id,'approved')),btn(T('Reddet','Reject'),()=>decide(x.id,'rejected'),'btn-danger')]));if(!pending.data.length)box.append(empty(T('Bekleyen eski kayıt yok. Yeni üyeler otomatik katılır.','No old pending accounts. New members join automatically.')));
  async function decide(targetId,decision){await run(async()=>{assert(null,(await db.rpc('decide_application',{target:targetId,decision})).error);showAdmin(target)})}
  const users=card(heading(T('Kayıtlı üyeler','Registered accounts')));for(const x of approved.data)users.append(listLine([child('strong',{text:x.game_name}),small(x.display_name+' • '+x.site_role)],[...(owner()&&x.id!==session.user.id?[btn(T('Rütbe ver','Set role'),async()=>{const value=prompt('R1, R2, R3, R4, R5:',x.site_role);if(!value)return;await run(async()=>{assert(null,(await db.rpc('set_site_role',{target:x.id,new_role:value.toUpperCase()})).error);showAdmin(target)})})]:[]),...(x.id!==session.user.id&& (owner()||!['R4','R5'].includes(x.site_role))?[btn(T('Erişimi kaldır','Revoke'),async()=>{if(!confirm(T('Bu hesabın erişimi kaldırılsın mı?','Revoke this account?')))return;await run(async()=>{assert(null,(await db.rpc('revoke_member',{target:x.id})).error);showAdmin(target)})},'btn-danger')]:[])]));
+ if(profile?.is_site_admin===true)users.prepend(p(T('Site Admin hesabın üye listelerinde gizlidir. Tam yetkili yönetim hesabın burada görünmez.','Your Site Admin account is hidden from member lists. It is not shown among regular accounts.'),'note-sm'));
  const mods=card(heading(T('Bildirilen özel mesajlar','Reported direct messages')));mods.append(p(T('Yalnızca kullanıcının bildirdiği mesajın metni gösterilir; tüm özel konuşma yöneticiye açılmaz.','Only the explicitly reported message excerpt is available to moderators, not entire conversations.'),'note-sm'));for(const x of reports.data)mods.append(listLine([small(formatDate(x.created_at)+' • '+x.reason),p(x.excerpt,'post-body')],[]));if(!reports.data.length)mods.append(empty(T('Bildirim yok.','No reports.')));
  const logs=card(heading(T('Yönetim işlem geçmişi','Audit history')));for(const x of audit.data)logs.append(metaLine(x.action,formatDate(x.recorded_at)));if(!audit.data.length)logs.append(empty(T('Henüz işlem kaydı yok.','No admin actions yet.')));
  content(target,box,users,mods,logs)
@@ -316,6 +326,7 @@ async function init(){translatePublic();$('#lang-toggle').addEventListener('clic
   db=module.createClient(SUPABASE_URL,SUPABASE_PUBLIC_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
   db.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY')setTimeout(()=>authDialog('change'),0);setTimeout(()=>syncAuth(),0)});
   await syncAuth();
+  if(new URLSearchParams(location.search).get('admin-setup')==='1')authDialog('admin-signup');
  }catch(e){err(e)}
 }
 init();
