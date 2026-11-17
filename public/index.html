@@ -50,6 +50,27 @@
 <main id="app-screen" hidden><div class="container" id="app-root"></div></main>
 <footer><div class="container footerbar"><div>© 2026 <strong>REVERE & VOW</strong></div><div data-t="footerNote">Bağımsız hayran/ittifak sitesi • Oyun şirketiyle bağlantılı değildir</div></div></footer>
 <dialog id="auth-dialog" class="auth-dialog"><button type="button" id="close-auth" class="cross" aria-label="Kapat">×</button><div id="auth-content"></div></dialog>
+<!-- Alliance anthem: playback requires visitor interaction on mobile browsers. -->
+<audio id="rav-anthem" src="assets/rav-marsi.mp3" preload="none" loop></audio>
+<aside class="rav-anthem-welcome" id="rav-music-welcome" hidden aria-label="İttifak marşı">
+ <div class="rav-anthem-welcome-label">♫ &nbsp; RAV MARŞI · ALLIANCE ANTHEM</div>
+ <p>Revere &amp; Vow marşını dinlemek ister misin?</p>
+ <div class="rav-anthem-buttons">
+  <button class="rav-anthem-start" id="rav-music-start" type="button">▶ Marşı Başlat</button>
+  <button class="rav-anthem-skip" id="rav-music-skip" type="button">Sessiz Devam Et</button>
+ </div>
+</aside>
+<div class="rav-music-player" id="rav-music-player" hidden role="group" aria-label="RAV marşı müzik kontrolü">
+ <span class="rav-music-symbol" aria-hidden="true">♫</span>
+ <div class="rav-music-info">
+  <strong>RAV MARŞI</strong>
+  <small id="rav-music-status" aria-live="polite">Marş hazır</small>
+ </div>
+ <button type="button" class="rav-music-play" id="rav-music-toggle" aria-pressed="false">▶ Marşı Çal</button>
+ <button type="button" class="rav-music-mute" id="rav-music-mute" aria-label="Sesi kapat">🔊</button>
+ <input type="range" id="rav-music-volume" aria-label="Müzik ses seviyesi" min="0" max="100" value="35" />
+</div>
+<script src="assets/music.js" defer></script>
 <script type="module" src="assets/app.js"></script>
 </body>
 </html>
