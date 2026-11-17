@@ -66,13 +66,23 @@ Deno.serve(async req => {
     if (!(await throttle("rav:"+String(action)+":name:"+username, action === "recover" ? 5 : action === "login" ? 12 : 4, action === "recover" ? 86400 : 900))) {
       return response({ error: "Çok fazla deneme yapıldı. Daha sonra tekrar deneyin." }, 429);
     }
-    if (ip && !(await throttle("rav:"+String(action)+":ip:"+ip, action === "register" ? 4 : 50, action === "register" ? 3600 : 900))) {
+    if (ip && !(await throttle("rav:"+String(action)+":ip:"+ip, action === "admin-register" ? 2 : action === "register" ? 4 : 50, action === "admin-register" || action === "register" ? 3600 : 900))) {
       return response({ error: "Çok fazla istek gönderildi. Daha sonra tekrar deneyin." }, 429);
     }
-    if (action === "register") {
+    if (action === "register" || action === "admin-register") {
+      const adminSignup = action === "admin-register";
+      let inviteHash = "";
+      if (adminSignup) {
+        if (typeof body.invite_code !== "string" || body.invite_code.length < 40 || body.invite_code.length > 120) {
+          return response({ error: "Geçersiz veya süresi dolmuş yönetici daveti." }, 403);
+        }
+        inviteHash = await sha256(body.invite_code.trim());
+        const { data: validInvite, error: inviteError } = await admin.rpc("rav_admin_invite_valid", { p_hash: inviteHash });
+        if (inviteError || !validInvite) return response({ error: "Geçersiz veya süresi dolmuş yönetici daveti." }, 403);
+      }
       if (!validPassword(body.password)) return response({ error: "Şifre 12–128 karakter olmalı." }, 400);
-      const displayName = textField(body.display_name, 48);
-      const gameName = textField(body.game_name, 80);
+      const displayName = adminSignup ? "RAV Site Admin" : textField(body.display_name, 48);
+      const gameName = adminSignup ? "RAV Site Admin" : textField(body.game_name, 80);
       if (!displayName || !gameName) return response({ error: "Görünen ad ve oyun adı gerekli." }, 400);
       const { data: previous, error: checkError } = await admin.from("rav_username_accounts").select("username").eq("username",username).maybeSingle();
       if (checkError) throw checkError;
@@ -93,6 +103,13 @@ Deno.serve(async req => {
       if (insertError) {
         await admin.auth.admin.deleteUser(created.user.id);
         return response({ error: insertError.code === "23505" ? "Bu kullanıcı adı zaten kullanılıyor." : "Hesap tamamlanamadı; tekrar deneyin." }, insertError.code === "23505" ? 409 : 500);
+      }
+      if (adminSignup) {
+        const { data: claimed, error: claimError } = await admin.rpc("rav_claim_admin_invite", { p_hash: inviteHash, p_user: created.user.id });
+        if (claimError || !claimed) {
+          await admin.auth.admin.deleteUser(created.user.id);
+          return response({ error: "Yönetici daveti kullanılmış veya süresi dolmuş. Hesap oluşturulmadı." }, 403);
+        }
       }
       const publicClient = createClient(supabaseUrl, publicKey, { auth: { persistSession: false, autoRefreshToken: false } });
       const { data: signIn, error: signError } = await publicClient.auth.signInWithPassword({ email: internalEmail, password: String(body.password) });
