@@ -4,6 +4,12 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#101418" />
+<meta name="application-name" content="RAV Alliance" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="manifest" href="/manifest.webmanifest" />
+<link rel="icon" type="image/svg+xml" href="/icons/icon.svg" />
+<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
 <meta name="description" content="Revere and Vow (RAV) — bağımsız Last Z ittifak topluluğu." />
 <title>Revere and Vow | RAV Alliance</title>
 <link rel="stylesheet" href="assets/styles.css" />
@@ -23,6 +29,7 @@
   </nav>
   <div class="topactions">
    <button id="lang-toggle" class="outline small" type="button" aria-label="Switch language">EN</button>
+   <button id="pwa-install" class="outline small pwa-install-btn" type="button" title="RAV uygulamasını yükle" aria-label="RAV uygulamasını yükle" hidden>📲</button>
    <button id="login-top" class="gold small" type="button">Üye Girişi</button>
   </div>
  </div>
@@ -50,6 +57,11 @@
 <main id="app-screen" hidden><div class="container" id="app-root"></div></main>
 <footer><div class="container footerbar"><div>© 2026 <strong>REVERE & VOW</strong></div><div data-t="footerNote">Bağımsız hayran/ittifak sitesi • Oyun şirketiyle bağlantılı değildir</div></div></footer>
 <dialog id="auth-dialog" class="auth-dialog"><button type="button" id="close-auth" class="cross" aria-label="Kapat">×</button><div id="auth-content"></div></dialog>
+<dialog id="pwa-help" class="pwa-help" aria-labelledby="pwa-help-title">
+ <div class="pwa-help-head"><img src="/icons/icon-192.png" width="54" height="54" alt="RAV simgesi"><div><h2 id="pwa-help-title">RAV Uygulamasını Yükle</h2><p>Revere & Vow ana ekranında</p></div></div>
+ <p id="pwa-help-text">Chrome menüsünü (⋮) açıp "Ana ekrana ekle" veya "Uygulamayı yükle" seçeneğini kullan.</p>
+ <button type="button" id="pwa-help-close" class="gold">Anladım</button>
+</dialog>
 <!-- Alliance anthem: playback requires visitor interaction on mobile browsers. -->
 <audio id="rav-anthem" src="assets/rav-marsi.mp3" preload="none" loop></audio>
 <aside class="rav-anthem-welcome" id="rav-music-welcome" hidden aria-label="İttifak marşı">
@@ -70,6 +82,7 @@
  <button type="button" class="rav-music-mute" id="rav-music-mute" aria-label="Sesi kapat">🔊</button>
  <input type="range" id="rav-music-volume" aria-label="Müzik ses seviyesi" min="0" max="100" value="35" />
 </div>
+<script src="assets/pwa.js" defer></script>
 <script src="assets/music.js" defer></script>
 <script type="module" src="assets/app.js"></script>
 </body>
